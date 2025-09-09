@@ -182,6 +182,12 @@
             ADICIONAR USUÁRIO
           </button>
         </div>
+        <div id="audio-recorder" class="controls-group">
+          <h3>Gravar Áudio (voz)</h3>
+          <button type="button" id="start-record-btn" disabled>Gravar Áudio</button>
+          <button type="button" id="stop-record-btn" disabled>Parar Gravação</button>
+          <div class="status-message" id="record-status"></div>
+        </div>
         <div class="people">
           <h3>Rostos Capturados</h3>
           <ul></ul>
@@ -190,152 +196,218 @@
     </div>
 
     <script>
-      document.addEventListener("DOMContentLoaded", function (event) {
-        const ws = new WebSocket(`ws://${window.location.hostname}:82`);
-        const view = document.getElementById("stream");
-        const personFormField = document.getElementById("person");
-        const streamButton = document.getElementById("button-stream");
-        const detectButton = document.getElementById("button-detect");
-        const captureButton = document.getElementById("button-capture");
+      const host = window.location.hostname;
+      const ws = new WebSocket(`ws://${host}:82`);
+      const view = document.getElementById("stream");
+      const personFormField = document.getElementById("person");
+      const streamButton = document.getElementById("button-stream");
+      const detectButton = document.getElementById("button-detect");
+      const captureButton = document.getElementById("button-capture");
 
-        // Função para controlar o estado dos botões
-        function updateButtons(isCapturing = false) {
-          const isInputEmpty = personFormField.value.trim().length === 0;
+      // Botões e status da gravação de áudio
+      const startRecordBtn = document.getElementById('start-record-btn');
+      const stopRecordBtn = document.getElementById('stop-record-btn');
+      const recordStatus = document.getElementById('record-status');
+      
+      let mediaRecorder;
+      let audioChunks = [];
 
-          // Desabilita todos os botões durante o cadastro para evitar interrupções
-          if (isCapturing) {
-            streamButton.disabled = true;
-            detectButton.disabled = true;
-            captureButton.disabled = true;
-            return; // Sai da função após desabilitar tudo
-          }
+      // Função para controlar o estado dos botões
+      function updateButtons(isCapturing = false) {
+        const isInputEmpty = personFormField.value.trim().length === 0;
 
-          // Habilita/desabilita os botões em estados normais (não-cadastro)
-          streamButton.disabled = false;
-          detectButton.disabled = false;
-
-          // O botão de captura depende exclusivamente do campo de nome
-          captureButton.disabled = isInputEmpty;
+        // Desabilita todos os botões durante o cadastro para evitar interrupções
+        if (isCapturing) {
+          streamButton.disabled = true;
+          detectButton.disabled = true;
+          captureButton.disabled = true;
+          startRecordBtn.disabled = true;
+          stopRecordBtn.disabled = true;
+          return; // Sai da função após desabilitar tudo
         }
 
+        // Habilita/desabilita os botões em estados normais (não-cadastro)
+        streamButton.disabled = false;
+        detectButton.disabled = false;
+
+        // O botão de captura e gravação depende exclusivamente do campo de nome
+        captureButton.disabled = isInputEmpty;
+        startRecordBtn.disabled = isInputEmpty;
+        stopRecordBtn.disabled = true;
+      }
+
+      updateButtons();
+
+      const statusDisplay = document.getElementById("current-status");
+      const statusContainer = document.getElementById("status-display");
+
+      function setStatus(text, color) {
+        statusDisplay.textContent = text;
+        statusContainer.style.background = color;
+      }
+
+      ws.onopen = () => {
+        console.log(`Conectado ao servidor WebSocket.`);
+        setStatus("Conectado", "green");
+        ws.send("stream"); // Inicia o streaming automaticamente
         updateButtons();
+      };
 
-        const statusDisplay = document.getElementById("current-status");
-        const statusContainer = document.getElementById("status-display");
-
-        function setStatus(text, color) {
-          statusDisplay.textContent = text;
-          statusContainer.style.background = color;
-        }
-
-        ws.onopen = () => {
-          console.log(`Conectado ao servidor WebSocket.`);
-          setStatus("Conectado", "green");
-          ws.send("stream"); // Inicia o streaming automaticamente
-          updateButtons();
-        };
-
-        ws.onmessage = (message) => {
-          if (typeof message.data === "string") {
-            if (message.data.substr(0, 8) == "listface") {
-              addFaceToScreen(message.data.substr(9));
-            } else if (message.data == "delete_faces") {
-              deleteAllFacesFromScreen();
-            } else if (message.data.startsWith("FACE CADASTRADA PARA")) {
-              personFormField.value = "";
-              setStatus(message.data, "green");
-              updateButtons();
-              ws.send("stream"); // Volta para o streaming após o cadastro
-            } else if (message.data == "CAPTURING") {
-              setStatus("Capturando rosto...", "#6995bb");
-              updateButtons(true);
-            } else if (message.data.startsWith("AMOSTRA NUMERO")) {
-              setStatus(message.data, "#6995bb");
-            } else if (message.data.startsWith("RECONHECIDO: ")) {
-              let nome = message.data.substring(13);
-              setStatus("Reconhecido: " + nome, "blue");
-              updateButtons();
-            } else if (message.data == "NAO RECONHECIDO/A") {
-              setStatus(message.data, "red");
-              updateButtons();
-            } else {
-              setStatus(message.data, "#6995bb");
-            }
-          }
-          if (message.data instanceof Blob) {
-            const urlObject = URL.createObjectURL(message.data);
-            view.src = urlObject;
-            view.onload = () => {
-              URL.revokeObjectURL(urlObject);
-            };
-          }
-        };
-
-        ws.onclose = () => {
-          setStatus("Desconectado", "#b83538");
-          console.log("Desconectado do servidor WebSocket.");
-          updateButtons(true);
-        };
-
-        ws.onerror = (error) => {
-          console.error("Erro no WebSocket: ", error);
-          setStatus("Erro de conexão", "#b83538");
-        };
-
-        streamButton.onclick = () => {
-          ws.send("stream");
-          setStatus("Streaming", "#6995bb");
-          updateButtons();
-        };
-
-        detectButton.onclick = () => {
-          ws.send("recognise");
-          setStatus("Detectando rostos...", "#6995bb");
-          updateButtons();
-        };
-
-        captureButton.onclick = () => {
-          const person_name = personFormField.value.trim();
-          if (person_name.length > 0) {
-            ws.send(`capture:${person_name}`);
+      ws.onmessage = (message) => {
+        if (typeof message.data === "string") {
+          if (message.data.substr(0, 8) == "listface") {
+            addFaceToScreen(message.data.substr(9));
+          } else if (message.data == "delete_faces") {
+            deleteAllFacesFromScreen();
+          } else if (message.data.startsWith("FACE CADASTRADA PARA")) {
+            personFormField.value = "";
+            setStatus(message.data, "green");
+            updateButtons();
+            ws.send("stream"); // Volta para o streaming após o cadastro
+          } else if (message.data == "CAPTURING") {
             setStatus("Capturando rosto...", "#6995bb");
             updateButtons(true);
+          } else if (message.data.startsWith("AMOSTRA NUMERO")) {
+            setStatus(message.data, "#6995bb");
+          } else if (message.data.startsWith("RECONHECIDO: ")) {
+            let nome = message.data.substring(13);
+            setStatus("Reconhecido: " + nome, "blue");
+            updateButtons();
+          } else if (message.data == "NAO RECONHECIDO/A") {
+            setStatus(message.data, "red");
+            updateButtons();
+          } else {
+            setStatus(message.data, "#6995bb");
           }
-        };
+        }
+        if (message.data instanceof Blob) {
+          const urlObject = URL.createObjectURL(message.data);
+          view.src = urlObject;
+          view.onload = () => {
+            URL.revokeObjectURL(urlObject);
+          };
+        }
+      };
 
-        personFormField.onkeyup = () => {
-          updateButtons();
-        };
+      ws.onclose = () => {
+        setStatus("Desconectado", "#b83538");
+        console.log("Desconectado do servidor WebSocket.");
+        updateButtons(true);
+      };
 
-        function deleteAllFacesFromScreen() {
-          const faceList = document.querySelector("ul");
-          while (faceList.firstChild) {
-            faceList.firstChild.remove();
-          }
-          personFormField.value = "";
-          updateButtons();
+      ws.onerror = (error) => {
+        console.error("Erro no WebSocket: ", error);
+        setStatus("Erro de conexão", "#b83538");
+      };
+
+      streamButton.onclick = () => {
+        ws.send("stream");
+        setStatus("Streaming", "#6995bb");
+        updateButtons();
+      };
+
+      detectButton.onclick = () => {
+        ws.send("recognise");
+        setStatus("Detectando rostos...", "#6995bb");
+        updateButtons();
+      };
+
+      captureButton.onclick = () => {
+        const person_name = personFormField.value.trim();
+        if (person_name.length > 0) {
+          ws.send(`capture:${person_name}`);
+          setStatus("Capturando rosto...", "#6995bb");
+          updateButtons(true);
+        }
+      };
+
+      personFormField.onkeyup = () => {
+        updateButtons();
+      };
+
+      function deleteAllFacesFromScreen() {
+        const faceList = document.querySelector("ul");
+        while (faceList.firstChild) {
+          faceList.firstChild.remove();
+        }
+        personFormField.value = "";
+        updateButtons();
+      }
+
+      function addFaceToScreen(person_name) {
+        const faceList = document.querySelector("ul");
+        let listItem = document.createElement("li");
+        let strongName = document.createElement("strong");
+        strongName.textContent = person_name;
+
+        let closeItem = document.createElement("span");
+        closeItem.classList.add("delete");
+        closeItem.textContent = "X";
+        closeItem.addEventListener("click", function () {
+          ws.send(`remove:${person_name}`);
+          listItem.remove();
+        });
+
+        listItem.appendChild(strongName);
+        listItem.appendChild(closeItem);
+        faceList.appendChild(listItem);
+      }
+      
+      // Lógica de gravação de áudio
+      startRecordBtn.addEventListener('click', async () => {
+        const personName = personFormField.value.trim();
+        if (personName === '') {
+          recordStatus.innerText = 'Por favor, digite um nome antes de gravar.';
+          return;
         }
 
-        function addFaceToScreen(person_name) {
-          const faceList = document.querySelector("ul");
-          let listItem = document.createElement("li");
-          let strongName = document.createElement("strong");
-          strongName.textContent = person_name;
-
-          let closeItem = document.createElement("span");
-          closeItem.classList.add("delete");
-          closeItem.textContent = "X";
-          closeItem.addEventListener("click", function () {
-            ws.send(`remove:${person_name}`);
-            listItem.remove();
-          });
-
-          listItem.appendChild(strongName);
-          listItem.appendChild(closeItem);
-          faceList.appendChild(listItem);
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(stream);
+          audioChunks = [];
+          
+          mediaRecorder.ondataavailable = event => {
+            audioChunks.push(event.data);
+          };
+          
+          mediaRecorder.onstop = () => {
+            // Cria um Blob do tipo audio/wav com os dados gravados
+            const audioBlob = new Blob(audioChunks, { 'type' : 'audio/wav' });
+            const formData = new FormData();
+            formData.append('audiofile', audioBlob, personName + '.wav');
+            
+            recordStatus.innerText = 'Enviando áudio...';
+            
+            // Envia o áudio para o endpoint do ESP32
+            fetch(`http://${host}/upload-audio`, {
+              method: 'POST',
+              body: formData
+            })
+            .then(response => response.text())
+            .then(text => {
+              recordStatus.innerText = text;
+            })
+            .catch(error => {
+              console.error('Erro no upload:', error);
+              recordStatus.innerText = 'Erro ao enviar o áudio.';
+            });
+          };
+          
+          mediaRecorder.start();
+          startRecordBtn.disabled = true;
+          stopRecordBtn.disabled = false;
+          recordStatus.innerText = 'Gravando...';
+        } catch (err) {
+          recordStatus.innerText = 'Erro ao acessar microfone: ' + err;
         }
+      });
+
+      stopRecordBtn.addEventListener('click', () => {
+        mediaRecorder.stop();
+        startRecordBtn.disabled = false;
+        stopRecordBtn.disabled = true;
+        recordStatus.innerText = 'Gravação concluída. Enviando...';
       });
     </script>
   </body>
 </html>
-Í
