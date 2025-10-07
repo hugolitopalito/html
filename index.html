@@ -351,42 +351,46 @@
         faceList.appendChild(listItem);
       }
       
-      // Lógica de upload de áudio
-      audioFile.addEventListener('change', () => {
-        if (audioFile.files.length > 0) {
-          const fileName = audioFile.files[0].name;
-          uploadLabel.innerText = `Arquivo Selecionado: ${fileName}`;
-          uploadStatus.innerText = '';
-        } else {
-          uploadLabel.innerText = 'Selecionar Arquivo';
-        }
+     // Lógica de upload de áudio (CORRIGIDA)
+  audioFile.addEventListener('change', () => {
+      if (audioFile.files.length > 0) {
+        const fileName = audioFile.files[0].name;
+        uploadLabel.innerText = `Arquivo: ${fileName}`;
+        uploadStatus.innerText = '';
+      } else {
+        uploadLabel.innerText = 'Selecionar Arquivo';
+      }
+      updateButtons();
+  });
+
+  uploadButton.addEventListener('click', () => {
+      if (audioFile.files.length === 0) {
+        uploadStatus.innerText = 'Por favor, selecione um arquivo de áudio.';
+        return;
+      }
+
+      const file = audioFile.files[0];
+      const fileName = file.name; // 1. Pegamos o nome do arquivo
+
+      uploadStatus.innerText = `Enviando ${fileName}...`;
+      
+      // 2. Construímos a URL correta com o nome do arquivo no final
+      fetch(`http://${host}/upload-audio/${fileName}`, {
+        method: 'POST',
+        body: file // 3. Enviamos o arquivo diretamente, sem FormData
+      })
+      .then(response => response.text())
+      .then(text => {
+        uploadStatus.innerText = text;
+        // Limpa a seleção após o upload
+        audioFile.value = ''; 
+        uploadLabel.innerText = 'Selecionar Arquivo';
         updateButtons();
+      })
+      .catch(error => {
+        console.error('Erro no upload:', error);
+        uploadStatus.innerText = 'Erro ao enviar o áudio.';
       });
-
-      uploadButton.addEventListener('click', () => {
-        if (audioFile.files.length === 0) {
-          uploadStatus.innerText = 'Por favor, selecione um arquivo de áudio.';
-          return;
-        }
-
-        const file = audioFile.files[0];
-        const formData = new FormData();
-        formData.append('audio', file);
-        
-        uploadStatus.innerText = 'Enviando áudio...';
-        
-        fetch(`http://${host}/upload-audio`, {
-          method: 'POST',
-          body: formData
-        })
-        .then(response => response.text())
-        .then(text => {
-          uploadStatus.innerText = text;
-        })
-        .catch(error => {
-          console.error('Erro no upload:', error);
-          uploadStatus.innerText = 'Erro ao enviar o áudio.';
-        });
       });
     </script>
   </body>
